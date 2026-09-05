@@ -1,0 +1,11 @@
+.direnv/
+.venv/
+__pycache__/
+.pytest_cache/
+dist/
+
+data/raw/
+data/frames/
+data/output/
+*.mp4
+*.webm
