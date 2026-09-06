@@ -91,7 +91,7 @@ def _body_line_regions(image: np.ndarray) -> list[np.ndarray]:
     if not peaks:
         return []
 
-    minimum_distance = max(10, int(round(height * 0.19)))
+    minimum_distance = max(10, int(round(height * 0.14)))
     selected: list[tuple[float, int]] = []
     for peak in sorted(peaks, key=lambda value: (value[0], -value[1]), reverse=True):
         if all(abs(peak[1] - other[1]) >= minimum_distance for other in selected):
@@ -109,7 +109,7 @@ def _body_line_regions(image: np.ndarray) -> list[np.ndarray]:
     padding = max(4, int(round(height * 0.05)))
     regions: list[np.ndarray] = []
     for index, (start, end) in enumerate(zip(boundaries, boundaries[1:])):
-        y1 = max(0, start if index == 0 else start + padding // 2)
+        y1 = max(0, start)
         y2 = min(height, end + padding)
         if y2 > y1:
             regions.append(image[y1:y2])
@@ -212,11 +212,11 @@ def recognize(image: np.ndarray, kind: str, config: OCRConfig | None = None) -> 
                 best = otsu
             line_results.append(best)
         if len(line_results) >= 2:
-            return OCRResult(
+            candidates.append(OCRResult(
                 text="\n".join(result.text for result in line_results),
                 confidence=float(np.mean([result.confidence for result in line_results])),
                 variant="lines",
-            )
+            ))
 
     for variant, prepared in variants:
         text, confidence = _run_tesseract(prepared, psm, config.language)
