@@ -41,9 +41,11 @@ uv run honkai-ocr image data/frames/sample-005.jpg \
 ```sh
 uv run honkai-ocr video data/raw/honkai-opening.mp4 \
   --output-dir data/output/opening \
-  --sample-fps 0.5 \
+  --sample-fps 2 \
   --max-seconds 300
 ```
+
+`--sample-fps 2` は0.5秒ごとのサンプリングです。台詞の取りこぼしを減らしたい場合は、この値を使用してください。
 
 会話枠を検出できないフレームはOCRしません。`events.json`の`needs_review`が付いたイベントは、保存された切り出し画像を見ながら手動修正する想定です。自動結果は`text`、検出信頼度や元フレームは別フィールドに残ります。
 
