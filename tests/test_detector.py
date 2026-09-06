@@ -25,6 +25,36 @@ def test_detect_dialog_finds_bottom_panel() -> None:
     assert dialog.height > 100
 
 
+def test_detect_dialog_normalizes_high_resolution_coordinates() -> None:
+    high_resolution = synthetic_dialog()
+    low_resolution = cv2.resize(high_resolution, (640, 360), interpolation=cv2.INTER_AREA)
+
+    low_dialog = detect_dialog(low_resolution)
+    high_dialog = detect_dialog(high_resolution)
+
+    assert low_dialog is not None
+    assert high_dialog is not None
+    assert abs(high_dialog.x - low_dialog.x * 2) <= 2
+    assert abs(high_dialog.y - low_dialog.y * 2) <= 2
+    assert abs(high_dialog.width - low_dialog.width * 2) <= 2
+    assert abs(high_dialog.height - low_dialog.height * 2) <= 2
+
+
+def test_detect_dialog_rejects_narrow_bright_decoy() -> None:
+    frame = np.full((360, 640, 3), (45, 70, 80), dtype=np.uint8)
+    panel = np.array([[70, 264], [82, 255], [639, 255], [639, 350], [80, 350]], np.int32)
+    cv2.fillPoly(frame, [panel], (225, 225, 225))
+    cv2.polylines(frame, [panel], True, (245, 245, 245), 3)
+    cv2.rectangle(frame, (220, 235), (420, 310), (160, 220, 240), -1)
+
+    dialog = detect_dialog(frame)
+
+    assert dialog is not None
+    assert dialog.x < 120
+    assert dialog.right > 600
+    assert dialog.y > 220
+
+
 def test_text_regions_follow_detected_panel() -> None:
     frame = synthetic_dialog()
     dialog = detect_dialog(frame)

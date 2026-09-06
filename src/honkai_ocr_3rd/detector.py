@@ -17,7 +17,7 @@ class DetectorConfig:
 
     search_top: float = 0.52
     search_bottom: float = 0.99
-    expected_height: float = 0.275
+    expected_height: float = 0.26
     min_height: float = 0.16
     max_height: float = 0.38
     min_width: float = 0.28
@@ -127,6 +127,8 @@ def _edge_candidates(frame: np.ndarray, config: DetectorConfig) -> list[tuple[fl
             bottom = min(image_height - 1, y + expected_height)
             if bottom / image_height < 0.86:
                 continue
+            if width / image_width < 0.55 or right / image_width < 0.85:
+                continue
             bottom_profile = _horizontal_transition(gray, bottom)
             top_strength = float(np.mean(profile[start:start + span])) / 255.0
             bottom_strength = float(np.mean(bottom_profile[x:right])) / 255.0
@@ -165,8 +167,27 @@ def detect_dialog(frame: np.ndarray, config: DetectorConfig | None = None) -> Di
     if frame is None or frame.ndim != 3 or frame.shape[2] != 3:
         raise ValueError("BGRのカラー画像を指定してください")
 
-    config = config or DetectorConfig()
     image_height, image_width = frame.shape[:2]
+    if image_width > 640:
+        scale = 640 / image_width
+        resized = cv2.resize(
+            frame,
+            (640, max(1, round(image_height * scale))),
+            interpolation=cv2.INTER_AREA,
+        )
+        detected = detect_dialog(resized, config)
+        if detected is None:
+            return None
+        return DialogRegion(
+            x=round(detected.x / scale),
+            y=round(detected.y / scale),
+            width=round(detected.width / scale),
+            height=round(detected.height / scale),
+            confidence=detected.confidence,
+            layout=detected.layout,
+        )
+
+    config = config or DetectorConfig()
     mask = dialog_mask(frame)
     search_y1 = int(image_height * config.search_top)
     search_y2 = int(image_height * config.search_bottom)

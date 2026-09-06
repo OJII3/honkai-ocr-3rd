@@ -1,4 +1,4 @@
-from honkai_ocr_3rd.pipeline import merge_events
+from honkai_ocr_3rd.pipeline import _is_weak_text, merge_events
 
 
 def event(start: float, end: float, text: str, speaker: str = "芽衣") -> dict:
@@ -32,3 +32,9 @@ def test_merge_events_keeps_different_lines_separate() -> None:
     ])
 
     assert len(merged) == 2
+
+
+def test_is_weak_text_rejects_transition_noise() -> None:
+    assert _is_weak_text("さャオ")
+    assert _is_weak_text("囲閻. 1 ` る e e ぁぁ団謀誌ー _ B")
+    assert not _is_weak_text("あなたなら、分かるでしょう?")

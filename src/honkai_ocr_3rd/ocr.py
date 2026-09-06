@@ -28,6 +28,7 @@ def _normalize_text(text: str) -> str:
     lines = []
     for line in text.splitlines():
         line = re.sub(r"[ \t]+", " ", line).strip()
+        line = re.sub(r"^[|_`~]+|[|_`~]+$", "", line).strip()
         # Tesseractは日本語を1文字ずつ空白で区切ることがある。
         line = re.sub(rf"(?<=[{japanese}]) +(?=[{japanese}])", "", line)
         line = re.sub(r"\s+([、。！？…」』）】〉》,.!?])", r"\1", line)
@@ -66,6 +67,53 @@ def _variants(image: np.ndarray, upscale: int) -> list[tuple[str, np.ndarray]]:
         ("adaptive", adaptive),
         ("blue", color_mask),
     ]
+
+
+def _body_line_regions(image: np.ndarray) -> list[np.ndarray]:
+    if image.size == 0 or image.ndim != 3:
+        return []
+
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    dark_fraction = np.mean(gray < 160, axis=1)
+    height = image.shape[0]
+    kernel_size = max(5, int(round(height * 0.10)))
+    if kernel_size % 2 == 0:
+        kernel_size += 1
+    smoothed = cv2.blur(dark_fraction.reshape(-1, 1), (1, kernel_size)).ravel()
+    radius = max(2, kernel_size // 2)
+    peak_floor = max(0.02, float(smoothed.max()) * 0.12)
+    peaks = [
+        (float(smoothed[row]), row)
+        for row in range(radius, height - radius)
+        if smoothed[row] >= float(np.max(smoothed[row - radius:row + radius + 1]))
+        and smoothed[row] >= peak_floor
+    ]
+    if not peaks:
+        return []
+
+    minimum_distance = max(10, int(round(height * 0.19)))
+    selected: list[tuple[float, int]] = []
+    for peak in sorted(peaks, key=lambda value: (value[0], -value[1]), reverse=True):
+        if all(abs(peak[1] - other[1]) >= minimum_distance for other in selected):
+            selected.append(peak)
+    centers = sorted(row for _, row in selected[:4])
+    if len(centers) < 2:
+        return []
+
+    boundaries = [0]
+    boundaries.extend((left + right) // 2 for left, right in zip(centers, centers[1:]))
+    active_threshold = max(0.02, float(smoothed.max()) * 0.08)
+    active_rows = np.flatnonzero(dark_fraction >= active_threshold)
+    last_text_row = int(active_rows[-1]) if len(active_rows) else height - 1
+    boundaries.append(min(height, last_text_row + 1))
+    padding = max(4, int(round(height * 0.05)))
+    regions: list[np.ndarray] = []
+    for index, (start, end) in enumerate(zip(boundaries, boundaries[1:])):
+        y1 = max(0, start if index == 0 else start + padding // 2)
+        y2 = min(height, end + padding)
+        if y2 > y1:
+            regions.append(image[y1:y2])
+    return regions
 
 
 def _run_tesseract(image: np.ndarray, psm: int, language: str) -> tuple[str, float]:
@@ -144,6 +192,32 @@ def recognize(image: np.ndarray, kind: str, config: OCRConfig | None = None) -> 
     if kind == "name":
         # 話者名は短く単純なため、最も情報を残す候補だけで十分。
         variants = [(variant, prepared) for variant, prepared in variants if variant == "gray"]
+
+    if kind == "body":
+        line_results: list[OCRResult] = []
+        for line in _body_line_regions(image):
+            line_candidates: list[OCRResult] = []
+            for variant, prepared in _variants(line, config.upscale):
+                if variant not in {"gray", "otsu"}:
+                    continue
+                text, confidence = _run_tesseract(prepared, 13, config.language)
+                if text:
+                    line_candidates.append(OCRResult(text=text, confidence=confidence, variant=variant))
+            if not line_candidates:
+                line_results = []
+                break
+            best = max(line_candidates, key=lambda result: result.confidence)
+            otsu = next((result for result in line_candidates if result.variant == "otsu"), None)
+            if otsu is not None and otsu.confidence + 1.5 >= best.confidence:
+                best = otsu
+            line_results.append(best)
+        if len(line_results) >= 2:
+            return OCRResult(
+                text="\n".join(result.text for result in line_results),
+                confidence=float(np.mean([result.confidence for result in line_results])),
+                variant="lines",
+            )
+
     for variant, prepared in variants:
         text, confidence = _run_tesseract(prepared, psm, config.language)
         if text:

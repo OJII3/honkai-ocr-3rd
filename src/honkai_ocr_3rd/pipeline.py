@@ -26,7 +26,11 @@ def _compact_text(text: str) -> str:
 def _is_weak_text(text: str) -> bool:
     compact = _compact_text(text)
     japanese = sum("\u3040" <= character <= "\u9fff" for character in compact)
-    return len(compact) < 3 or japanese == 0
+    noise = sum(
+        character.isascii() and (character.isalnum() or character in "_`~|\\")
+        for character in compact
+    )
+    return len(compact) < 3 or japanese < 4 or (noise >= 3 and noise > japanese * 0.25)
 
 
 def _is_continuation(left: str, right: str) -> bool:
@@ -219,6 +223,8 @@ def process_video(
 
     events: list[dict[str, Any]] = []
     current: dict[str, Any] | None = None
+    previous_regions: dict[str, Any] | None = None
+    previous_results: tuple[OCRResult, OCRResult] | None = None
     frame_index = 0
     sampled = 0
     while True:
@@ -235,13 +241,34 @@ def process_video(
         sampled += 1
         dialog = detect_dialog(frame)
         if dialog is None:
+            previous_regions = None
+            previous_results = None
             frame_index += 1
             continue
 
         regions = text_regions(frame, dialog)
-        name_result = recognize(regions["name"], "name") if run_ocr else OCRResult("", 0.0, "disabled")
-        body_result = recognize(regions["body"], "body") if run_ocr else OCRResult("", 0.0, "disabled")
+        can_reuse = (
+            run_ocr
+            and previous_regions is not None
+            and previous_results is not None
+            and all(
+                region.shape == previous_regions[kind].shape
+                and float(cv2.absdiff(region, previous_regions[kind]).mean()) < 1.5
+                for kind, region in regions.items()
+            )
+        )
+        if can_reuse:
+            name_result, body_result = previous_results
+        else:
+            name_result = recognize(regions["name"], "name") if run_ocr else OCRResult("", 0.0, "disabled")
+            body_result = recognize(regions["body"], "body") if run_ocr else OCRResult("", 0.0, "disabled")
+            if run_ocr:
+                previous_regions = {kind: region.copy() for kind, region in regions.items()}
+                previous_results = (name_result, body_result)
         text = body_result.text
+        if run_ocr and _is_weak_text(text):
+            body_result = OCRResult("", 0.0, "weak")
+            text = ""
         speaker = name_result.text
         is_same_event = (
             current is not None
