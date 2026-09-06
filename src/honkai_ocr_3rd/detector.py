@@ -250,11 +250,60 @@ def text_regions(frame: np.ndarray, dialog: DialogRegion) -> dict[str, np.ndarra
     name_y2 = dialog.y + int(dialog.height * 0.34)
     body_y1 = dialog.y + int(dialog.height * 0.35)
     body_y2 = dialog.y + int(dialog.height * 0.84)
+    body = frame[body_y1:body_y2, x1:x2]
 
     return {
         "name": frame[name_y1:name_y2, x1:x2],
-        "body": frame[body_y1:body_y2, x1:x2],
+        "body": _remove_advance_arrow(body),
     }
+
+
+def _remove_advance_arrow(body: np.ndarray) -> np.ndarray:
+    """本文右下に表示される進行用の逆三角だけをOCR前に隠す。"""
+
+    if body.size == 0 or body.ndim != 3:
+        return body
+
+    height, width = body.shape[:2]
+    if height < 20 or width < 20:
+        return body
+
+    gray = cv2.cvtColor(body, cv2.COLOR_BGR2GRAY)
+    search_x = int(width * 0.80)
+    search_y = int(height * 0.60)
+    dark = cv2.inRange(gray[search_y:, search_x:], 0, 145)
+    components, _, stats, _ = cv2.connectedComponentsWithStats(dark, 8)
+
+    for component in range(1, components):
+        left = int(stats[component, cv2.CC_STAT_LEFT]) + search_x
+        top = int(stats[component, cv2.CC_STAT_TOP]) + search_y
+        component_width = int(stats[component, cv2.CC_STAT_WIDTH])
+        component_height = int(stats[component, cv2.CC_STAT_HEIGHT])
+        area = int(stats[component, cv2.CC_STAT_AREA])
+        fill = area / (component_width * component_height)
+        touches_right = left + component_width >= width - max(2, int(width * 0.02))
+
+        # 本文の文字を巻き込まないよう、右端・下半分にある小さく密な
+        # 成分だけを進行三角の候補にする。
+        if not touches_right or left < int(width * 0.88):
+            continue
+        if not 5 <= component_width <= max(40, int(height * 0.60)):
+            continue
+        if not int(height * 0.10) <= component_height <= int(height * 0.40):
+            continue
+        if area < 20 or fill < 0.25:
+            continue
+
+        padding = max(1, int(height * 0.02))
+        x1 = max(0, left - padding)
+        y1 = max(0, top - padding)
+        x2 = min(width, left + component_width + padding)
+        y2 = min(height, top + component_height + padding)
+        cleaned = body.copy()
+        cleaned[y1:y2, x1:x2] = 255
+        return cleaned
+
+    return body
 
 
 def _estimate_text_start(frame: np.ndarray, dialog: DialogRegion) -> int:
