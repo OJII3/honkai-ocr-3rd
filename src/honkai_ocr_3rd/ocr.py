@@ -207,9 +207,6 @@ def recognize(image: np.ndarray, kind: str, config: OCRConfig | None = None) -> 
                 line_results = []
                 break
             best = max(line_candidates, key=lambda result: result.confidence)
-            otsu = next((result for result in line_candidates if result.variant == "otsu"), None)
-            if otsu is not None and otsu.confidence + 1.5 >= best.confidence:
-                best = otsu
             line_results.append(best)
         if len(line_results) >= 2:
             candidates.append(OCRResult(
