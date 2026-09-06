@@ -55,6 +55,19 @@ def test_detect_dialog_rejects_narrow_bright_decoy() -> None:
     assert dialog.y > 220
 
 
+def test_detect_dialog_expands_right_panel_with_missing_left_edge() -> None:
+    frame = np.full((360, 640, 3), (45, 70, 80), dtype=np.uint8)
+    panel = np.array([[165, 264], [190, 255], [639, 255], [639, 350], [180, 350]], np.int32)
+    cv2.fillPoly(frame, [panel], (225, 225, 225))
+    cv2.line(frame, (290, 255), (639, 255), (245, 245, 245), 3)
+
+    dialog = detect_dialog(frame)
+
+    assert dialog is not None
+    assert dialog.x < 210
+    assert dialog.right > 600
+
+
 def test_text_regions_follow_detected_panel() -> None:
     frame = synthetic_dialog()
     dialog = detect_dialog(frame)

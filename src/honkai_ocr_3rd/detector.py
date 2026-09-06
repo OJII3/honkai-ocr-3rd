@@ -196,6 +196,10 @@ def detect_dialog(frame: np.ndarray, config: DetectorConfig | None = None) -> Di
     if edge_candidates:
         score, x, y, width, height = max(edge_candidates, key=lambda candidate: candidate[0])
         if score >= 0.40:
+            right = x + width
+            if x / image_width >= 0.25 and right / image_width >= 0.85:
+                x = max(0, x - int(image_width * 0.12))
+                width = right - x
             width = min(width, image_width - x)
             height = min(height, image_height - y)
             layout = "full" if x / image_width <= 0.08 else "right"
@@ -238,6 +242,10 @@ def detect_dialog(frame: np.ndarray, config: DetectorConfig | None = None) -> Di
         # パネルの右側は画面外まで続くことが多く、実況者や文字によって
         # マスクが途切れても右端までの領域として評価する。
         region_width = max(width, image_width - x - 2) if x + width > image_width * 0.72 else width
+        if x / image_width >= 0.25 and (x + region_width) / image_width >= 0.85:
+            right = x + region_width
+            x = max(0, x - int(image_width * 0.12))
+            region_width = right - x
         score = _candidate_score(mask, gray, x, y, region_width, height, config)
         candidates.append((score, x, y, region_width, height))
 
