@@ -40,7 +40,12 @@ def _is_continuation(left: str, right: str) -> bool:
     right_compact = _compact_text(right)
     if left_compact in right_compact or right_compact in left_compact:
         return True
-    return _similar(left_compact, right_compact) >= 0.44
+    if _similar(left_compact, right_compact) >= 0.44:
+        return True
+    shared = SequenceMatcher(None, left_compact, right_compact).find_longest_match(
+        0, len(left_compact), 0, len(right_compact)
+    ).size
+    return shared >= 10 and shared >= min(len(left_compact), len(right_compact)) * 0.30
 
 
 def _event_quality(event: dict[str, Any]) -> float:

@@ -34,6 +34,16 @@ def test_merge_events_keeps_different_lines_separate() -> None:
     assert len(merged) == 2
 
 
+def test_merge_events_handles_ocr_variation_with_shared_text() -> None:
+    merged = merge_events([
+        event(10.0, 12.0, "メビウスに関することが知りたい。特に彼女の生と死に関してよ。他の英傑たちの言い方だと"),
+        event(12.5, 14.0, "ご握蕩呈繧嘉暮惠言壹。特に彼女の生と死に関してよ"),
+    ])
+
+    assert len(merged) == 1
+    assert merged[0]["text"].startswith("メビウスに関すること")
+
+
 def test_is_weak_text_rejects_transition_noise() -> None:
     assert _is_weak_text("さャオ")
     assert _is_weak_text("囲閻. 1 ` る e e ぁぁ団謀誌ー _ B")
