@@ -1,0 +1,27 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "honkai-ocr-3rd"
+version = "0.1.0"
+description = "崩壊3rdの実況動画からダイアログを文字起こしするツール"
+requires-python = ">=3.11"
+dependencies = [
+  "numpy>=2.0,<3",
+  "opencv-python-headless>=4.10",
+]
+
+[project.scripts]
+honkai-ocr = "honkai_ocr_3rd.cli:main"
+
+[dependency-groups]
+dev = [
+  "pytest>=8.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/honkai_ocr_3rd"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
