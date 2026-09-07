@@ -175,7 +175,52 @@ def _body_line_content_region(image: np.ndarray) -> np.ndarray:
     padding = max(4, int(round(image.shape[0] * 0.15)))
     x1 = max(0, left - padding)
     x2 = min(image.shape[1], right + padding + 1)
-    return image[:, x1:x2]
+    content = image[:, x1:x2]
+    gray = cv2.cvtColor(content, cv2.COLOR_BGR2GRAY)
+    active_rows = np.flatnonzero(np.mean(gray < 185, axis=1) > 0.025)
+    if len(active_rows) == 0:
+        return content
+    row_padding = max(1, int(round(content.shape[0] * 0.05)))
+    y1 = max(0, int(active_rows[0]) - row_padding)
+    y2 = min(content.shape[0], int(active_rows[-1]) + row_padding + 1)
+    return content[y1:y2]
+
+
+def _paddle_name_content_region(image: np.ndarray) -> np.ndarray:
+    content = _name_content_region(image)
+    if content.size == 0:
+        return content
+
+    height = content.shape[0]
+    gray = cv2.cvtColor(content, cv2.COLOR_BGR2GRAY)
+    text_area = gray[:max(1, int(height * 0.80))]
+    active = text_area < 185
+    ys, xs = np.where(active)
+    if len(xs) == 0:
+        return content
+    padding = max(1, int(round(height * 0.05)))
+    x1 = max(0, int(xs.min()) - padding)
+    x2 = min(content.shape[1], int(xs.max()) + padding + 1)
+    y1 = max(0, int(ys.min()) - padding)
+    y2 = min(content.shape[0], int(ys.max()) + padding + 1)
+    return content[y1:y2, x1:x2]
+
+
+def _paddle_body_line_content_region(image: np.ndarray) -> np.ndarray:
+    if image.size == 0 or image.ndim != 3:
+        return image
+
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    ys, xs = np.where(gray < 185)
+    if len(xs) == 0:
+        return image
+
+    padding = max(2, int(round(image.shape[0] * 0.05)))
+    x1 = max(0, int(xs.min()) - padding)
+    x2 = min(image.shape[1], int(xs.max()) + padding + 1)
+    y1 = max(0, int(ys.min()) - padding)
+    y2 = min(image.shape[0], int(ys.max()) + padding + 1)
+    return image[y1:y2, x1:x2]
 
 
 def _paddle_model(required: bool) -> Any | None:
@@ -190,7 +235,11 @@ def _paddle_model(required: bool) -> Any | None:
     try:
         from paddleocr import TextRecognition
 
-        _PADDLE_MODEL = TextRecognition(model_name="PP-OCRv5_server_rec")
+        _PADDLE_MODEL = TextRecognition(
+            model_name="PP-OCRv5_server_rec",
+            enable_mkldnn=False,
+            cpu_threads=1,
+        )
     except Exception as error:
         _PADDLE_UNAVAILABLE = True
         if required:
@@ -207,8 +256,7 @@ def _run_paddle(image: np.ndarray, kind: str, required: bool) -> OCRResult | Non
     def run_single(prepared: np.ndarray) -> OCRResult | None:
         if prepared.size == 0:
             return OCRResult(text="", confidence=0.0, variant="paddle")
-        rgb = cv2.cvtColor(prepared, cv2.COLOR_BGR2RGB)
-        predictions = model.predict([rgb], batch_size=1)
+        predictions = model.predict([prepared], batch_size=1)
         prediction = next(iter(predictions), None)
         if prediction is None:
             return OCRResult(text="", confidence=0.0, variant="paddle")
@@ -222,9 +270,10 @@ def _run_paddle(image: np.ndarray, kind: str, required: bool) -> OCRResult | Non
 
     try:
         if kind == "body":
+            lines = _body_line_regions(image) or [image]
             line_results = []
-            for line in _body_line_regions(image):
-                result = run_single(_body_line_content_region(line))
+            for line in lines:
+                result = run_single(_paddle_body_line_content_region(line))
                 if result is not None and result.text:
                     line_results.append(result)
             if line_results:
@@ -233,8 +282,8 @@ def _run_paddle(image: np.ndarray, kind: str, required: bool) -> OCRResult | Non
                     confidence=float(np.mean([result.confidence for result in line_results])),
                     variant="paddle-lines",
                 )
-        prepared = _name_content_region(image) if kind == "name" else image
-        return run_single(prepared)
+            return OCRResult(text="", confidence=0.0, variant="paddle")
+        return run_single(_paddle_name_content_region(image))
     except Exception as error:
         if required:
             raise RuntimeError("PaddleOCRの認識に失敗しました") from error

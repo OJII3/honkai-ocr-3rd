@@ -62,4 +62,4 @@ def test_paddle_result_is_used_when_configured(monkeypatch) -> None:
     result = recognize(image, "body", OCRConfig(engine="paddle"))
 
     assert result.text == "だけど今は......"
-    assert result.variant == "paddle"
+    assert result.variant == "paddle-lines"
