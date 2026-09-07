@@ -9,7 +9,13 @@ description = "崩壊3rdの実況動画からダイアログを文字起こし�
 requires-python = ">=3.11"
 dependencies = [
   "numpy>=2.0,<3",
-  "opencv-python-headless>=4.10",
+  "opencv-contrib-python>=4.10,<5.0",
+]
+
+[project.optional-dependencies]
+paddle = [
+  "paddleocr>=3.0,<4.0",
+  "paddlepaddle>=3.0,<4.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
 
 [project.scripts]

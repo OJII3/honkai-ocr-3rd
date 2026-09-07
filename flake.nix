@@ -34,9 +34,10 @@
             ];
 
             TESSDATA_PREFIX = "${tessdata}/share/tessdata";
-            LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [ pkgs.stdenv.cc.cc pkgs.zlib ];
+            LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [ pkgs.stdenv.cc.cc pkgs.zlib pkgs.glib pkgs.libGL ];
 
             shellHook = ''
+              unset PYTHONPATH
               if [ ! -d .venv ]; then
                 uv venv --python ${pkgs.python311}/bin/python
               fi

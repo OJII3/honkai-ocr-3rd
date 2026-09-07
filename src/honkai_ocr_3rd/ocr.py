@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 import os
 import re
 import subprocess
 import unicodedata
 from dataclasses import dataclass
+from typing import Any
 
 import cv2
 import numpy as np
@@ -16,10 +18,15 @@ from .models import OCRResult
 
 @dataclass(frozen=True)
 class OCRConfig:
+    engine: str = "auto"
     language: str = "jpn"
     speaker_psm: int = 7
     body_psm: int = 6
     upscale: int = 3
+
+
+_PADDLE_MODEL: Any | None = None
+_PADDLE_UNAVAILABLE = False
 
 
 def _normalize_text(text: str) -> str:
@@ -116,6 +123,124 @@ def _body_line_regions(image: np.ndarray) -> list[np.ndarray]:
     return regions
 
 
+def _name_content_region(image: np.ndarray) -> np.ndarray:
+    if image.size == 0 or image.ndim != 3:
+        return image
+
+    height, width = image.shape[:2]
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    text_area = gray[:max(1, int(height * 0.80))]
+    dark = text_area < 185
+    column_counts = np.count_nonzero(dark, axis=0)
+    active_columns = np.flatnonzero(column_counts >= max(1, int(height * 0.03)))
+    if len(active_columns) == 0:
+        return image
+
+    padding = max(4, int(round(height * 0.15)))
+    x1 = max(0, int(active_columns[0]) - padding)
+    x2 = min(width, int(active_columns[-1]) + padding + 1)
+    row_counts = np.count_nonzero(dark[:, x1:x2], axis=1)
+    active_rows = np.flatnonzero(row_counts >= 1)
+    if len(active_rows) == 0:
+        return image[:, x1:x2]
+    y1 = max(0, int(active_rows[0]) - padding)
+    y2 = min(height, int(active_rows[-1]) + padding + 1)
+    return image[y1:y2, x1:x2]
+
+
+def _body_line_content_region(image: np.ndarray) -> np.ndarray:
+    if image.size == 0 or image.ndim != 3:
+        return image
+
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    projection = np.mean(gray < 185, axis=0)
+    active = (projection > 0.025).astype(np.uint8)[None, :] * 255
+    kernel_width = max(9, int(round(image.shape[1] * 0.02)))
+    active = cv2.dilate(active, np.ones((1, kernel_width), dtype=np.uint8))[0]
+    columns = np.flatnonzero(active)
+    if len(columns) == 0:
+        return image
+
+    starts = columns[np.r_[True, np.diff(columns) > 1]]
+    ends = columns[np.r_[np.diff(columns) > 1, True]]
+    runs = [(int(start), int(end)) for start, end in zip(starts, ends) if end - start + 1 >= 6]
+    if not runs:
+        return image
+
+    first_start, first_end = runs[0]
+    if first_end - first_start + 1 >= max(18, int(image.shape[1] * 0.02)) and len(runs) >= 2:
+        left, right = max(runs[1:], key=lambda run: run[1] - run[0])
+    else:
+        left, right = max(runs, key=lambda run: run[1] - run[0])
+    padding = max(4, int(round(image.shape[0] * 0.15)))
+    x1 = max(0, left - padding)
+    x2 = min(image.shape[1], right + padding + 1)
+    return image[:, x1:x2]
+
+
+def _paddle_model(required: bool) -> Any | None:
+    global _PADDLE_MODEL, _PADDLE_UNAVAILABLE
+    if _PADDLE_MODEL is not None:
+        return _PADDLE_MODEL
+    if _PADDLE_UNAVAILABLE:
+        if required:
+            raise RuntimeError("PaddleOCRが利用できません。`uv sync --extra paddle`を実行してください")
+        return None
+
+    try:
+        from paddleocr import TextRecognition
+
+        _PADDLE_MODEL = TextRecognition(model_name="PP-OCRv5_server_rec")
+    except Exception as error:
+        _PADDLE_UNAVAILABLE = True
+        if required:
+            raise RuntimeError("PaddleOCRの初期化に失敗しました") from error
+        return None
+    return _PADDLE_MODEL
+
+
+def _run_paddle(image: np.ndarray, kind: str, required: bool) -> OCRResult | None:
+    model = _paddle_model(required)
+    if model is None:
+        return None
+
+    def run_single(prepared: np.ndarray) -> OCRResult | None:
+        if prepared.size == 0:
+            return OCRResult(text="", confidence=0.0, variant="paddle")
+        rgb = cv2.cvtColor(prepared, cv2.COLOR_BGR2RGB)
+        predictions = model.predict([rgb], batch_size=1)
+        prediction = next(iter(predictions), None)
+        if prediction is None:
+            return OCRResult(text="", confidence=0.0, variant="paddle")
+        data = prediction.json
+        if isinstance(data, str):
+            data = json.loads(data)
+        result = data.get("res", data)
+        text = _normalize_text(str(result.get("rec_text") or ""))
+        confidence = float(result.get("rec_score") or 0.0) * 100
+        return OCRResult(text=text, confidence=confidence, variant="paddle")
+
+    try:
+        if kind == "body":
+            line_results = []
+            for line in _body_line_regions(image):
+                result = run_single(_body_line_content_region(line))
+                if result is not None and result.text:
+                    line_results.append(result)
+            if line_results:
+                return OCRResult(
+                    text="\n".join(result.text for result in line_results),
+                    confidence=float(np.mean([result.confidence for result in line_results])),
+                    variant="paddle-lines",
+                )
+        prepared = _name_content_region(image) if kind == "name" else image
+        return run_single(prepared)
+    except Exception as error:
+        if required:
+            raise RuntimeError("PaddleOCRの認識に失敗しました") from error
+        return None
+
+
 def _run_tesseract(image: np.ndarray, psm: int, language: str) -> tuple[str, float]:
     ok, encoded = cv2.imencode(".png", image)
     if not ok:
@@ -182,6 +307,15 @@ def _run_tesseract(image: np.ndarray, psm: int, language: str) -> tuple[str, flo
 
 def recognize(image: np.ndarray, kind: str, config: OCRConfig | None = None) -> OCRResult:
     config = config or OCRConfig()
+    if config.engine not in {"auto", "tesseract", "paddle"}:
+        raise ValueError(f"未対応のOCRエンジンです: {config.engine}")
+    if config.engine in {"auto", "paddle"}:
+        paddle_result = _run_paddle(image, kind, required=config.engine == "paddle")
+        if paddle_result is not None:
+            if kind != "name" or len(re.sub(r"\s", "", paddle_result.text)) >= 2:
+                return paddle_result
+            if config.engine == "paddle":
+                return OCRResult(text="", confidence=0.0, variant="paddle")
     if kind == "name":
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         if float(np.mean(gray < 185)) < 0.008:

@@ -151,7 +151,12 @@ body {{ background:#202124; color:#eee; font-family:sans-serif; margin:1rem; }}
     (output_dir / "review.html").write_text(document, encoding="utf-8")
 
 
-def process_image(image_path: Path, output_dir: Path, run_ocr: bool = True) -> dict[str, Any]:
+def process_image(
+    image_path: Path,
+    output_dir: Path,
+    run_ocr: bool = True,
+    ocr_config: OCRConfig | None = None,
+) -> dict[str, Any]:
     image = cv2.imread(str(image_path))
     if image is None:
         raise ValueError(f"画像を読み込めません: {image_path}")
@@ -177,7 +182,7 @@ def process_image(image_path: Path, output_dir: Path, run_ocr: bool = True) -> d
         cv2.imwrite(str(crop_path), crop)
         crops[kind] = str(crop_path)
         if run_ocr:
-            ocr_results[kind] = recognize(crop, kind).as_dict()
+            ocr_results[kind] = recognize(crop, kind, ocr_config).as_dict()
     result["crops"] = crops
     if run_ocr:
         result["ocr"] = ocr_results
@@ -210,6 +215,7 @@ def process_video(
     sample_fps: float = 2.0,
     max_seconds: float | None = 300.0,
     run_ocr: bool = True,
+    ocr_config: OCRConfig | None = None,
 ) -> list[dict[str, Any]]:
     """動画を間引きながら処理し、台詞候補を時系列にまとめる。"""
 
@@ -265,8 +271,16 @@ def process_video(
         if can_reuse:
             name_result, body_result = previous_results
         else:
-            name_result = recognize(regions["name"], "name") if run_ocr else OCRResult("", 0.0, "disabled")
-            body_result = recognize(regions["body"], "body") if run_ocr else OCRResult("", 0.0, "disabled")
+            name_result = (
+                recognize(regions["name"], "name", ocr_config)
+                if run_ocr
+                else OCRResult("", 0.0, "disabled")
+            )
+            body_result = (
+                recognize(regions["body"], "body", ocr_config)
+                if run_ocr
+                else OCRResult("", 0.0, "disabled")
+            )
             if run_ocr:
                 previous_regions = {kind: region.copy() for kind, region in regions.items()}
                 previous_results = (name_result, body_result)
